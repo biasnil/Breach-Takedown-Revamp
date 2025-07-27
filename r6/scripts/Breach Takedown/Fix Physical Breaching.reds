@@ -1,32 +1,48 @@
-@addField(ScriptedPuppetPS)
-public let wasIncapacitatedViaBreach: Bool;
+@replaceMethod(ScriptedPuppet)
+protected func OnIncapacitated() -> Void {
+  let link: ref<PuppetDeviceLinkPS>;
 
-@wrapMethod(ScriptedPuppetPS)
-public final func SetWasIncapacitated(wasIncapacitated: Bool) -> Void {
-  wrappedMethod(wasIncapacitated); // preserve original behavior
-
-  let owner: wref<GameObject> = this.GetOwnerEntity();
-  if !IsDefined(owner) || !wasIncapacitated {
+  // Prevent duplicate incapacitation handling
+  if this.IsIncapacitated() {
     return;
-  }
+  };
 
-  // Check if the incapacitation was caused by our custom Breach Takedown status effect
-  if StatusEffectSystem.ObjectHasStatusEffect(owner, t"TBL.BreachTakedownSE") {
-    this.wasIncapacitatedViaBreach = true;
+  // Reset security and interaction states
+  this.m_securitySupportListener = null;
+  this.EnableLootInteractionWithDelay(this);
+  this.EnableInteraction(n"Grapple", false);
+  this.EnableInteraction(n"TakedownLayer", false);
+  this.EnableInteraction(n"AerialTakedown", false);
+  StatusEffectHelper.RemoveAllStatusEffectsByType(this, gamedataStatusEffectType.Cloaked);
 
-    // Optional: trigger additional effect logic
-    let effectName: CName = n"physicalBreach";
-    let effectTag: CName = TweakDBInterface.GetCName(t"TBL.EffectTag", n"kill");
+  // Special takedown interaction disabling
+  if this.IsBoss() {
+    this.EnableInteraction(n"BossTakedownLayer", false);
+  } else if this.IsMassive() {
+    this.EnableInteraction(n"MassiveTargetTakedownLayer", false);
+  };
 
-    TakedownGameEffectHelper.FillTakedownData(
-      GameInstance.GetPlayerSystem(owner.GetGame()).GetLocalPlayerMainGameObject(),
-      GameInstance.GetPlayerSystem(owner.GetGame()).GetLocalPlayerMainGameObject(),
-      owner,
-      effectName,
-      effectTag,
-      "TBL.BreachTakedownSE"
-    );
-  } else {
-    this.wasIncapacitatedViaBreach = false;
-  }
+  // Disable awareness and hacking
+  this.RevokeAllTickets();
+  this.GetSensesComponent().ToggleComponent(false);
+  this.GetBumpComponent().Toggle(false);
+  this.UpdateQuickHackableState(false);
+
+  // Cancel active reinforcement calls
+  if this.IsPerformingCallReinforcements() {
+    this.HidePhoneCallDuration(gamedataStatPoolType.CallReinforcementProgress);
+  };
+
+  // Set persistent incapacitated state and clear loadouts
+  this.GetPuppetPS().SetWasIncapacitated(true);
+
+  // Keep NPC network-visible — no unlinking
+  link = this.GetDeviceLink() as PuppetDeviceLinkPS;
+  if IsDefined(link) {
+    link.NotifyAboutSpottingPlayer(false);
+    // NOTE: we intentionally do NOT call any function like UnregisterNetworkLink...
+  };
+
+  // Update cached state
+  CachedBoolValue.SetDirty(this.m_isActiveCached);
 }
