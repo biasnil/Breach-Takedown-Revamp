@@ -17,52 +17,57 @@ protected func OnProcessRule(size: Uint32, out grid: array<array<GridCell>>) -> 
     let tempPrograms: array<TweakDBID>;
     let x: Int32;
 
+    let playerPrograms: array<MinigameProgramData> = this.minigameController.GetPlayerPrograms();
+
     this.m_bbNetwork = this.m_blackboardSystem.Get(GetAllBlackboardDefs().NetworkBlackboard);
     this.m_isOfficerBreach = this.m_bbNetwork.GetBool(GetAllBlackboardDefs().NetworkBlackboard.OfficerBreach);
     this.m_isRemoteBreach = this.m_bbNetwork.GetBool(GetAllBlackboardDefs().NetworkBlackboard.RemoteBreach);
     this.m_isFirstAttempt = this.m_bbNetwork.GetInt(GetAllBlackboardDefs().NetworkBlackboard.Attempt) == 1;
     let isItemBreach: Bool = this.m_bbNetwork.GetBool(GetAllBlackboardDefs().NetworkBlackboard.ItemBreach);
-    let playerPrograms: array<MinigameProgramData> = this.minigameController.GetPlayerPrograms();
 
     this.FilterPlayerPrograms(playerPrograms);
+
     miniGameRecord = TweakDBInterface.GetMinigame_DefRecord(t"minigame_v2.DefaultMinigame");
     powerLevel = GameInstance.GetStatsSystem((this.m_entity as GameObject).GetGame()).GetStatValue(Cast<StatsObjectID>(this.m_entity.GetEntityID()), gamedataStatType.PowerLevel);
     extraDifficulty = miniGameRecord.ExtraDifficulty();
     overlapProbability = miniGameRecord.OverlapProbability();
+
     this.RandomMode(atStart);
 
-    if ArraySize(playerPrograms) > 0 {
-        i = 0;
-        while i < ArraySize(playerPrograms) + 1 {
-            rand = RandRangeF(0.00, 1.00);
-            if rand < overlapProbability {
-                overlapInstance.instructionNumber = i;
-                x = RandDifferent(i, ArraySize(playerPrograms) + 1);
-                rand = RandRangeF(0.00, 1.00);
-                overlapInstance.otherInstruction = x;
-                overlapInstance.atStart = atStart;
-                overlapInstance.rarity = this.minigameController.GetRarity(rand);
-                ArrayPush(overlappingPrograms, overlapInstance);
-                this.RandomMode(atStart);
-            };
-            i += 1;
+    i = 0;
+    while i < ArraySize(playerPrograms) + 1 {
+        rand = RandRangeF(0.00, 1.00);
+        if rand < overlapProbability {
+            overlapInstance.instructionNumber = i;
+            x = RandDifferent(i, ArraySize(playerPrograms) + 1);
+            overlapInstance.otherInstruction = x;
+            overlapInstance.atStart = atStart;
+            overlapInstance.rarity = this.minigameController.GetRarity(RandRangeF(0.00, 1.00));
+            ArrayPush(overlappingPrograms, overlapInstance);
+            this.RandomMode(atStart);
         };
+        i += 1;
     };
 
     ArrayClear(tempPrograms);
+
+    let devSys: ref<PlayerDevelopmentSystem> = GameInstance.GetScriptableSystemsContainer(this.m_player.GetGame()).Get(n"PlayerDevelopmentSystem") as PlayerDevelopmentSystem;
+    let devData: ref<PlayerDevelopmentData> = devSys != null ? devSys.GetDevelopmentData(this.m_player) : null;
+    let hasCopyPaste: Bool = devData != null && devData.IsNewPerkBought(gamedataNewPerkType.Intelligence_Left_Perk_2_3) > 0;
+
     i = 0;
     while i < ArraySize(playerPrograms) {
         miniGameActionRecord = TweakDBInterface.GetMinigameActionRecord(playerPrograms[i].actionID);
         programComplexity = miniGameActionRecord.Complexity();
         combinedPowerLevel = programComplexity + powerLevel + extraDifficulty;
         length = this.DefineLength(combinedPowerLevel, this.m_bufferSize, ArraySize(playerPrograms));
+
         program.name = StringToName(LocKeyToString(miniGameActionRecord.ObjectActionUI().Caption()));
         program.note = miniGameActionRecord.ObjectActionUI().Description();
         program.programTweakID = playerPrograms[i].actionID;
         program.iconTweakID = miniGameActionRecord.ObjectActionUI().CaptionIcon().TexturePartID().GetID();
 
-        // Only auto-fulfill if the vanilla perk is active
-        if !isItemBreach && i == 0 && GameInstance.GetStatsSystem(this.m_player.GetGame()).GetStatValue(Cast<StatsObjectID>(this.m_player.GetEntityID()), gamedataStatType.AutomaticUploadPerk) >= 1.00 {
+        if !isItemBreach && i == 0 && hasCopyPaste {
             program.isFulfilled = true;
         } else {
             program.isFulfilled = false;
@@ -72,10 +77,13 @@ protected func OnProcessRule(size: Uint32, out grid: array<array<GridCell>>) -> 
             ArrayPush(tempPrograms, program.programTweakID);
             this.minigameController.AddUnlockableProgram(program, this.GenerateRarities(length, overlappingPrograms, i + 1));
         };
+
         i += 1;
     };
+
     return true;
 }
+
 
 @replaceMethod(MinigameGenerationRuleOverridePrograms)
 protected func OnProcessRule(size: Uint32, out grid: array<array<GridCell>>) -> Bool {
@@ -92,6 +100,10 @@ protected func OnProcessRule(size: Uint32, out grid: array<array<GridCell>>) -> 
 
     this.m_minigameRecord.OverrideProgramsList(overrideProgramList);
 
+    let devSys: ref<PlayerDevelopmentSystem> = GameInstance.GetScriptableSystemsContainer(this.m_player.GetGame()).Get(n"PlayerDevelopmentSystem") as PlayerDevelopmentSystem;
+    let devData: ref<PlayerDevelopmentData> = devSys != null ? devSys.GetDevelopmentData(this.m_player) : null;
+    let hasCopyPaste: Bool = devData != null && devData.IsNewPerkBought(gamedataNewPerkType.Intelligence_Left_Perk_2_3) > 0;
+
     i = 0;
     while i < ArraySize(overrideProgramList) {
         programRecord = overrideProgramList[i];
@@ -102,14 +114,15 @@ protected func OnProcessRule(size: Uint32, out grid: array<array<GridCell>>) -> 
         program.note = minigameRecord.ObjectActionUI().Description();
         program.iconTweakID = minigameRecord.ObjectActionUI().CaptionIcon().TexturePartID().GetID();
 
-        // Only auto-fulfill if player has perk, not based on breach takedown
-        if !this.m_isItemBreach && i == 0 && GameInstance.GetStatsSystem(this.m_player.GetGame()).GetStatValue(Cast<StatsObjectID>(this.m_player.GetEntityID()), gamedataStatType.AutomaticUploadPerk) >= 1.00 {
+        if !this.m_isItemBreach && i == 0 && hasCopyPaste {
             program.isFulfilled = true;
         } else {
             program.isFulfilled = false;
-        }
+        };
 
         programChain = programRecord.CharactersChain();
+        ArrayClear(finalChain);
+
         j = 0;
         while j < ArraySize(programChain) {
             if programChain[j] == -1 {
@@ -122,8 +135,8 @@ protected func OnProcessRule(size: Uint32, out grid: array<array<GridCell>>) -> 
         };
 
         this.minigameController.AddUnlockableProgram(program, finalChain);
-        ArrayClear(finalChain);
         i += 1;
     };
+
     return true;
 }
